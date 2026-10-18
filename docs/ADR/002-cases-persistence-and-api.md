@@ -8,6 +8,8 @@
 
 ## 1. Scope
 
+Current transport extension: [ADR-006](006-streaming-and-decision-flow.md) adds chat SSE, replay and cancellation using the same case transactions. The JSON API below remains the domain baseline; it does not imply that DefaultChatTransport accepts a JSON 202 response.
+
 Durable cases, evidence metadata, revision history, policy snapshots, transactional jobs, public/internal timelines and application HTTP contracts. Identity is defined in ADR-001; image/model execution is in ADR-003.
 
 ## 2. Technology Documentation References
@@ -78,6 +80,7 @@ All entity IDs are opaque UUIDs; timestamps are UTC instants displayed in Europe
 | Recommendation | ID; case ID; version; inputRevision; evidence/analysis/policy IDs; category; public rationale/clauses/questions/next steps; changed facts; current/superseded | Immutable; current only if revision checks pass |
 | EmployeeAction | ID; case ID; actor/time; action; outcome; source recommendation; expected revision; internal rationale; public explanation | Append-only outside an explicit authorized data-deletion process |
 | DeclarationReceipt | ID; case ID; customer/acting employee ID; declaration text; confirmation source; receivedAt | Never created by LLM output alone |
+| StreamRun/StreamEvent | Public run identity, attempt, ordered safe progress/draft/canonical payloads and terminal state | Bounded replay storage and expiry per ADR-006; not canonical conversation history |
 | Job/ModelRun | ID; case/input revision; stage; status; lease token/expiry; attempts; nextRunAt; input hash; model/provider; usage/cost; error code | See ADR-003; no raw reasoning traces |
 | IdempotencyRecord | Actor + route + key; canonical payload hash; committed status/result ref; createdAt | Unique actor/route/key; retain for lifetime of synthetic case |
 | ClarificationIssue | Case ID; stable allowed fact key; asked-at message; unsuccessful round count; resolved flag | Application counts rounds, model does not control counters |
@@ -99,7 +102,7 @@ Dataset reset is explicit, confirms the target path, stops both processes and de
 
 ### Common conventions
 
-Same-origin JSON except multipart uploads. IDs are UUID strings, dates ISO date-only, timestamps ISO UTC. Responses use explicit DTOs, never ORM objects. Reads use no-store. Lists are cursor-paginated, default 25 and maximum 100; timeline pages default 50 and maximum 100. Authorized full history is reconstructed server-side for model context independently of client pagination.
+Same-origin JSON except multipart uploads and the explicit AI SDK UI SSE endpoints in ADR-006. IDs are UUID strings, dates ISO date-only, timestamps ISO UTC. Responses use explicit DTOs, never ORM objects. Reads use no-store. Lists are cursor-paginated, default 25 and maximum 100; timeline pages default 50 and maximum 100. Authorized full history is reconstructed server-side for model context independently of client pagination.
 
 Mutation requests carry `Idempotency-Key` (UUID) and `expectedCaseRevision` when changing an existing case. Check for a previously committed idempotency result before rejecting an old expected revision, so a valid replay still returns its original result. First successful create returns 201, accepted processing returns 202, other saved mutations return 200 or 201. Duplicate same-key/same-payload operations return the original committed result; same key with another payload returns 409. If the first operation is still uncommitted, return 409 operation_in_progress and Retry-After. File upload hash covers metadata plus content, not multipart boundary bytes.
 
@@ -117,7 +120,7 @@ Errors: 400 malformed request; 401 missing session; 403 disallowed employee acti
 | GET /api/v1/cases/{id}/evidence/{evidenceId} | Case authorization; evidence must belong to case | Compressed image bytes; private no-store, nosniff | 404; never serves a requested arbitrary path |
 | POST /api/v1/cases/{id}/submit | Expected revision, staged evidence ID, complete form; return intention advice/withdraw_now | Case receipt, receivedAt, job ID, current revision | 422 missing required data; withdrawal confirmation handled separately |
 | GET /api/v1/cases/{id}/timeline | Cursor; authorized audience | Ordered audience-filtered messages/events, next cursor | No internal counts leaked |
-| POST /api/v1/cases/{id}/messages | Text up to 5,000 characters and/or one staged replacement ID; expected revision | Saved message, new revision and queued job if needed | Reject empty message without evidence; submitted cases only |
+| POST /api/v1/cases/{id}/messages | Text up to 5,000 characters and/or one staged replacement ID; expected revision | Saved message, new revision and queued job if needed | JSON alternative to the /chat transport; both call one service and share domain idempotency |
 | POST /api/v1/cases/{id}/facts/confirm | Allowed typed fact patch, source message ID, expected revision | Saved fact revisions, new input revision and reassessment job | Cannot set actor, policy, role or outcome |
 | POST /api/v1/cases/{id}/declarations | Explicit declaration text/confirmation and expected revision | Saved withdrawal receipt/time, new input revision and reassessment job | Chat extraction alone insufficient |
 | POST /api/v1/cases/{id}/review-request | Public reason, expected revision | Employee queue state | No AI call required |
@@ -126,6 +129,9 @@ Errors: 400 malformed request; 401 missing session; 403 disallowed employee acti
 | POST /api/v1/cases/{id}/inspection-findings | Employee; internal text, optional explicitly reviewed public statement; expected revision | Saved finding; new public input revision/job only if public statement supplied | Internal text never auto-published |
 | POST /api/v1/cases/{id}/employee-actions | Employee; approve/override/clarify/escalate; source recommendation where applicable; expected revision; outcome/rationale/explanation | Saved action, public event, new revisions and status | 409 stale; override requires nonblank internal rationale and public explanation, each max 5,000 characters |
 | POST /api/v1/cases/{id}/links | Employee; related case ID, reason, expected revision | Case link visible to authorized viewers | Same owner/company only; no type mutation |
+| POST /api/v1/cases/{id}/chat | Latest user input, evidence reference, revision and key | 200 AI SDK UI SSE after durable acceptance | See ADR-006; not 202 JSON |
+| GET /api/v1/cases/{id}/chat/stream | Authorized case and optional run reference | Active replay/live SSE or 204 | No job creation; see ADR-006 |
+| POST /api/v1/cases/{id}/chat/runs/{runId}/cancel | Revision and idempotency key | Saved cancellation or already_complete | Explicit worker cancellation; see ADR-006 |
 | GET /api/v1/health | Loopback health caller | Liveness; readiness summary for DB/worker/config | No credentials or case data |
 
 Facts proposed by the model remain proposals until confirmed by the user/employee. Messages still remain in full context, but ambiguous dates do not become verified deadline facts automatically. A confirmed fact can be corrected only through a new fact revision.

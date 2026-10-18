@@ -8,6 +8,8 @@
 
 ## 1. Scope
 
+Research revision: [ADR-005](005-ai-sdk-options-and-research.md) and [ADR-006](006-streaming-and-decision-flow.md) replace the earlier native-fetch/non-streaming-only integration with AI SDK 7 and a durable public UI stream. Image limits, policy/evidence versions, privacy boundaries and validation rules below remain applicable. See ADR-007 for existing environment-key compatibility.
+
 Backend compression, distinct complaint/return visual analysis and decision prompts, full authorized conversation context, structured results, durable execution, retries and cost controls. The model has no application action tools, RAG or purchase-history access.
 
 ## 2. Technology Documentation References
@@ -22,7 +24,8 @@ Official sources checked on 2026-10-18; no Context7 ID was verified.
 | OpenRouter | [Provider routing](https://openrouter.ai/docs/guides/routing/provider-selection) | Capability and data-policy filters |
 | OpenRouter | [Reasoning controls](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) | Bounded thinking and hidden-reasoning exclusion |
 | Model | [Gemini 2.5 Flash](https://openrouter.ai/google/gemini-2.5-flash) | Initial vision candidate |
-| Model | [Claude Sonnet 4.5](https://openrouter.ai/anthropic/claude-sonnet-4.5) | Initial decision/conversation candidate |
+| Model | [GPT-6 Luna](https://openrouter.ai/openai/gpt-6-luna) | Current LLM_MODEL decision/chat candidate |
+| Model | [Claude Sonnet 4.5](https://openrouter.ai/anthropic/claude-sonnet-4.5) | Superseded default; explicit evaluation alternative only |
 
 These model pages establish documented availability/capabilities, not suitability for this product. No paid call, actual credentials check, endpoint compatibility capture or domain-quality evaluation occurred during ADR creation.
 
@@ -42,13 +45,13 @@ Application upload errors retain form values and do not publish a guessed analys
 
 ### Models and request configuration
 
-Start qualification with VISION_MODEL `google/gemini-2.5-flash` and DECISION_MODEL `anthropic/claude-sonnet-4.5`. These are stable, explicit model IDs chosen as an initial capability baseline, not a claim that they are the newest or best. Selection may change through a reviewed configuration/prompt evaluation without changing case contracts. No automatic model fallback is configured.
+Honor the existing LLM_MODEL example `openai/gpt-6-luna` for decision/chat qualification. Use the separately configurable VISION_MODEL with recommended default `google/gemini-2.5-flash` for image qualification. The earlier Claude Sonnet 4.5 default is superseded; it is only an explicit evaluation alternative. These are candidate model choices, not measured product-quality claims. No automatic model fallback is configured.
 
-Use native fetch to the fixed OpenRouter `/chat/completions` endpoint. Require schema-capable providers with `require_parameters=true`; set `data_collection=deny`, `zdr=true` and an explicit qualified provider allowlist. Do not relax filters on failure. These routing filters are not proof of EU-only processing, a processor agreement or total gateway non-retention. Standard global routing is accepted only for synthetic local work; production data terms remain deferred.
+Use AI SDK 7 Core with createOpenRouter and an explicit `.chat(modelId)` adapter, targeting OpenRouter `/api/v1/chat/completions`. Do not pass a bare model string that resolves through another default gateway. Require schema-capable providers with `require_parameters=true`; set `data_collection=deny`, `zdr=true` and an explicit qualified provider allowlist. Do not relax filters on failure. These routing filters are not proof of EU-only processing, a processor agreement or total gateway non-retention. Standard global routing is accepted only for synthetic local work; production data terms remain deferred.
 
-Configure non-streaming structured output with strict schema validation. Initial vision total output cap: 4,096 tokens with no more than 1,024 reasoning tokens if the endpoint supports that budget. Initial decision total cap: 8,192 with a 2,048-token reasoning budget and reasoning excluded from returned content. Keep visible output headroom: reasoning can count against the total cap. Ignore/drop any returned reasoning blocks; never persist or render them. Unknown parameter compatibility must fail the smoke test, not be silently ignored.
+Use `generateText` with `Output.object` for vision and the first decision, and `streamText` with the same complete decision schema for follow-up turns. ADR-006 limits partial public display and requires full validation before canonical publication. Initial vision total output cap: 4,096 tokens with no more than 1,024 reasoning tokens if the selected endpoint supports that setting. Initial decision total cap: 8,192; qualify the existing LLM_MODEL with reasoning effort high rather than blindly applying an Anthropic-specific fixed budget. Exclude reasoning from public output and reserve visible output headroom. Ignore/drop returned reasoning blocks; never persist or render them. Unknown parameter compatibility must fail qualification rather than be silently ignored.
 
-At setup, inspect actual model/provider capabilities, resolve provider slugs and perform one synthetic vision request and one decision request with the intended schema and reasoning settings. Verify nonempty valid output, requested routing restrictions, finish reason and usage. The provider allowlist stays unset and AI jobs remain unavailable until this succeeds. Do not reuse the repository's existing generic LLM_MODEL value as an assumed compatible vision/reasoning model.
+At setup, inspect actual model/provider capabilities, resolve provider slugs and perform one synthetic vision request and one decision request with the intended schema and reasoning settings. Verify nonempty valid output, requested routing restrictions, finish reason and usage. The provider allowlist stays unset and AI jobs remain unavailable until this succeeds. Preserve the existing LLM_MODEL setting, but verify its actual reasoning/schema compatibility; do not assume it also accepts image input. SDK/provider published peer dependencies and request settings must be qualified together.
 
 ### Prompts, context and audiences
 
@@ -70,7 +73,7 @@ Poll the SQLite jobs table every second. Allow two concurrent jobs globally and 
 
 Use separate image-analysis and decision checkpoints. A successful image checkpoint survives decision failure; text-only follow-up reuses the current image analysis. A new photo requires new analysis. Stale jobs are marked superseded; newer pending revisions are coalesced into one current job where no published result would be lost.
 
-Each upstream attempt has a 90-second abort timeout. At 60 seconds from enqueue, expose delayed status and a human-review action; that UI threshold is independent of provider execution. Permit at most three upstream attempts per stage/run, with delays of 2 and 10 seconds. Honor Retry-After for 429/503 up to 60 seconds; if a longer delay is required, stop automatic attempts and expose manual retry/review. Retry only transient network/timeouts, 429 and 5xx. Authentication, unsupported model/parameters, content refusal, malformed/truncated/empty output and schema/citation failures stop automatic processing and offer human review or an explicit new retry operation.
+SDK automatic retries are disabled; the worker alone owns retry count and spend reservations. Each upstream attempt has a 90-second abort timeout. At 60 seconds from enqueue, expose delayed status and a human-review action; that UI threshold is independent of provider execution. Permit at most three upstream attempts per stage/run, with delays of 2 and 10 seconds. Honor Retry-After for 429/503 up to 60 seconds; if a longer delay is required, stop automatic attempts and expose manual retry/review. Retry only transient network/timeouts, 429 and 5xx. Authentication, unsupported model/parameters, content refusal, malformed/truncated/empty output and schema/citation failures stop automatic processing and offer human review or an explicit new retry operation.
 
 After a provider response, validate structure and semantic invariants before publishing. If the worker crashes after the provider completed but before saving its response, it may repeat a paid call: at-least-once external execution is unavoidable here. Conditional unique run/publication keys prevent duplicate persisted recommendation messages, but do not claim exactly-once model billing.
 
@@ -85,7 +88,7 @@ Store IDs, stage, input hash, model/provider, prompt/policy/evidence versions, t
 | Contract | Required content |
 |---|---|
 | VisionResult | Schema version; scenario; suitability relevant/unclear/irrelevant; public observations and limitations; condition enum; employee-only causes/hypotheses and resale assessment where applicable |
-| DecisionResult | Schema version; recommendation category; public short rationale; known-fact/source references; clause IDs; missing fact keys/questions; numbered next steps; changed-fact summary; optional proposed fact patch |
+| DecisionResult | Schema version; recommendation category; publicReply up to 5,000 characters; changeSummary up to 1,000; public short rationale; known-fact/source references; clause IDs; missing fact keys/questions; numbered next steps; optional proposed fact patch |
 | ProcessingInput | Case ID, inputRevision, active evidence/analysis IDs, pinned policy/prompt IDs, audience, ordered authorized context, trusted date |
 | ModelRunResult | Provider request ID where supplied, actual model/provider, finish reason, validated result, usage/cost, error classification |
 | ProcessingState | Job ID, stage, queued/started/updated times, attempts, next retry, delayed flag, public-safe error/review availability |
@@ -144,7 +147,7 @@ The first bubble greeting, AI label and section headings are rendered by the app
 
 **Context:** Image description and policy decisions have distinct requirements. There is no product-specific evaluation evidence yet.
 
-**Decision:** Qualify Gemini 2.5 Flash for vision and Claude Sonnet 4.5 with reasoning for decisions, retaining explicit model/provider configuration.
+**Decision:** As revised by ADR-007, qualify the existing LLM_MODEL value for decisions/chat and a separate image candidate defaulting to Gemini 2.5 Flash. Retain explicit model/provider configuration and run the existing scenario gate before adoption.
 
 **Rejected alternatives:** Unverified generic repository model configuration cannot be assumed multimodal; automatic model routing hides behavior changes.
 

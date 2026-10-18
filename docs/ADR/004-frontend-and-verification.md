@@ -8,6 +8,8 @@
 
 ## 1. Scope
 
+Research revision: [ADR-006](006-streaming-and-decision-flow.md) and [ADR-007](007-project-initialization-and-chat-ui.md) replace the original polling-only/no-chat-SDK guidance. The form, access, persistence and PRD verification requirements remain applicable.
+
 Polish UI, navigation, form-to-chat transition, durable case rendering, local startup contract and verification across all PRD acceptance criteria. Visual identity remains in a later design document; no colors, fonts or brand assets are invented here.
 
 ## 2. Technology Documentation References
@@ -36,7 +38,7 @@ Official documentation checked on 2026-10-18; no verified Context7 IDs.
 | /cases/new | Create draft and show initial form |
 | /cases/{id} | Processing/chat/detail based on persisted state |
 
-Use server-rendered authenticated entry views and client components for interactive form, chat, upload and employee actions. Native accessible form controls, CSS Modules and shared design tokens are sufficient. Do not add a global state framework or AI chat SDK; React local state plus same-origin fetch handles the accepted UI scope.
+Use server-rendered authenticated entry views and client components for interactive form, chat, upload and employee actions. Use TypeScript strict mode, Tailwind and current shadcn AI Elements patterns with AI SDK useChat/DefaultChatTransport. Do not add a second chat runtime or global state framework. Ordinary domain mutations remain same-origin JSON fetches; chat transport follows ADR-006.
 
 The server is the source of truth. Browser state holds unsaved text, local File selection, send/upload status and current operation keys. Clear case caches on sign-out/account change. Do not persist private cases, session tokens or image blobs to localStorage. A page refresh restores saved state from the server; unsent text can be lost and is labeled unsaved.
 
@@ -48,9 +50,9 @@ Photo preview supports replace/remove and explains supported limits. A draft Fil
 
 ### Processing and chat
 
-After successful submit, replace the draft URL with `/cases/{id}` and render the saved receipt immediately. Poll case state every two seconds while processing, every ten seconds while the case page is idle/visible, pause background-tab polling and refetch on focus. The employee queue polls every ten seconds. No WebSocket or SSE is required. Before employee confirmation, always submit the revision from the view; polling is not a substitute for server-side concurrency control.
+After successful submit, replace the draft URL with `/cases/{id}` and render the saved receipt immediately. Attach to the active AI SDK UI stream for progress and the committed first bubble. Poll summary/status every ten seconds while visible and refetch on focus; use two-second case-state polling as a degraded fallback while a stream is unavailable. The employee queue polls every ten seconds. Never overwrite active hook messages from a polling result. Before employee confirmation, submit the revision from the view; SSE/polling do not replace server concurrency checks.
 
-Do not stream model tokens. Display a recommendation only after schema, policy and revision validation and durable commit. Loading labels distinguish upload, visual analysis and recommendation. At 60 seconds show delayed assistance and human-review controls while retaining existing messages. Failed processing is a status panel, not an invented assistant decision.
+Stream progress and real follow-up publicReply draft snapshots as specified in ADR-006. Drafts are explicitly uncommitted and not approvable; display a canonical recommendation only after schema, policy and revision validation plus durable commit. Initial processing has progress only before the complete first bubble. At 60 seconds show delayed assistance and human-review controls. Failed processing clears drafts and displays a status panel, not an invented assistant decision.
 
 Render structured recommendation sections with fixed greeting/AI notice for the first bubble, then category, explanation, policy references, questions and numbered next steps. Public company/employee statements have a distinct actor label. Treat all generated/user text as text; no raw HTML, executable links or unrestricted Markdown. Only application-generated policy links point to approved internal policy views or the recorded source URLs.
 
@@ -75,7 +77,8 @@ Use semantic labels, associated field errors, focus on the first invalid field a
 | View contract | Content |
 |---|---|
 | DraftView | Persisted fields/evidence reference; case revision; local dirty/save state |
-| CaseView | Public detail, statuses, receipt, current recommendation/outcome, revisions, pagination cursors |
+| CaseView | Public detail, statuses, receipt, current recommendation/outcome, revisions, active run ID, pagination cursors |
+| Chat hook and draft preview | Typed UI messages plus transient progress/reply snapshots; never authoritative decisions |
 | PendingMessage | Client ID/key, text/evidence reference, sending/failed/confirmed state |
 | EmployeeReviewView | Explicit InternalCaseView, current recommendation and approval eligibility, unsaved action draft |
 | ErrorView | Stable code, Polish message, field errors, retryable flag and request reference |
@@ -108,13 +111,13 @@ Supply Mailpit as a documented local binary prerequisite with a pinned tested ve
 
 ## 6. Technical Decisions
 
-### Durable polling rather than token streaming
+### Polling-only chat transport — superseded
 
-**Status:** Accepted. **Date:** 2026-10-18.
+**Status:** Superseded by the proposed streaming revision in ADR-006. **Date:** 2026-10-18.
 
 **Context:** The first decision must be complete, validated and recoverable after refresh.
 
-**Decision:** Poll persisted state and publish whole validated messages.
+**Decision:** Original recommendation was polling-only. Current researched replacement uses SDK UI SSE with durable worker/replay, progress and labeled follow-up drafts. Canonical messages remain validated and committed before publication.
 
 **Rejected alternatives:** Token streaming can expose invalid/incomplete decisions; WebSocket infrastructure adds complexity without a local requirement.
 

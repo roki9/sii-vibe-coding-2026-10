@@ -8,6 +8,8 @@
 
 ## 1. Overview
 
+Research revision: [ADR-005](005-ai-sdk-options-and-research.md), [ADR-006](006-streaming-and-decision-flow.md) and [ADR-007](007-project-initialization-and-chat-ui.md) define the proposed current AI SDK/OpenRouter/streaming design. They replace the earlier native-fetch and polling-only recommendations in this record. Context7 MCP verification remains explicitly outstanding; no application implementation or package installation is claimed.
+
 Build a local web application for authenticated customers and company employees, with durable shared cases, two-stage image/decision processing and employee confirmation. Target the agreed pilot assumptions of 20 simultaneously active users and 100 new cases per day. These are design inputs, not demonstrated capacity.
 
 User choices: no stack preference; local operation; recommend persistence and authentication; retain OpenRouter; recommend models. This ADR selects architecture, not production hosting. No application code or dependencies are installed by this documentation task.
@@ -18,10 +20,13 @@ User choices: no stack preference; local operation; recommend persistence and au
 | [002 — Cases and persistence](002-cases-persistence-and-api.md) | Entities, transactions, storage, lifecycle and API |
 | [003 — AI processing](003-ai-and-image-processing.md) | Image compression, jobs, model contracts and recovery |
 | [004 — Frontend and verification](004-frontend-and-verification.md) | UI state, accessibility and verification across layers |
+| [005 — AI SDK option research](005-ai-sdk-options-and-research.md) | Source findings, alternatives and selection |
+| [006 — Streaming and decision flow](006-streaming-and-decision-flow.md) | SDK integration, multimodal processing, streams and recovery |
+| [007 — Initialization and chat UI](007-project-initialization-and-chat-ui.md) | Empty-app generator procedure and current components |
 
 ## 2. Technology Documentation References
 
-Official documentation checked on 2026-10-18. Context7 CLI 0.8.0 resolution attempts for Next.js, Better Auth and Drizzle failed with npm DNS error EAI_AGAIN. No callable Context7 MCP tools were available in this session. Official sources were used as the skill's fallback; no Context7 IDs were verified or invented.
+Official documentation checked on 2026-10-18. Context7 CLI 0.8.0 resolution attempts for Next.js, Better Auth and Drizzle failed with npm DNS error EAI_AGAIN. No callable Context7 MCP tools were available in this session. Official sources were used as the skill's fallback; no Context7 IDs were verified or invented. During the current revision the MCP server name also returned unknown; `/vercel/ai` is user-supplied and remains unqueried. See ADR-005 for the current primary-source evidence and this limitation.
 
 | Technology | Official documentation | Used for |
 |---|---|---|
@@ -40,13 +45,14 @@ Use a modular monolith: one Next.js web process and one separate Node.js worker 
 | Layer | Technology | Reason |
 |---|---|---|
 | Runtime | Node.js 24 LTS, npm | Supported LTS baseline and one package manager |
-| Web/UI/API | Next.js 16 App Router, React, TypeScript | One origin and shared validation types |
-| Styling | CSS Modules and global design tokens | No additional component framework required; visual design remains separate |
+| Web/UI/API | Next.js 16 App Router, React, TypeScript strict mode | One origin and shared validation types |
+| Styling/chat components | Tailwind, current shadcn/ui AI Elements patterns and design tokens | Streaming-aware source-owned primitives; visual design remains separate |
 | Validation | Zod | Runtime validation for requests and model output |
 | Persistence | SQLite, better-sqlite3, Drizzle ORM/Kit | Local database without a database service; explicit migrations |
 | Identity | Better Auth with its stable Drizzle adapter | Maintained account/session lifecycle |
 | Images | sharp | Server-side image decoding and transformation |
-| Model transport | Native server-side fetch to OpenRouter Chat Completions | Small, explicit integration without an agent framework |
+| Model transport | AI SDK 7 with @openrouter/ai-sdk-provider explicit chat models | Shared typed multimodal/structured/streaming integration over OpenRouter Chat Completions |
+| Chat state/transport | @ai-sdk/react matching v7, useChat and DefaultChatTransport | Typed UI message streaming with domain persistence |
 | Email | Nodemailer SMTP transport; local Mailpit | Real verification/recovery flow without sending external mail |
 | Jobs | SQLite job table, one Node worker | Restart recovery without Redis |
 | Verification | Vitest, React Testing Library, Playwright; Chrome DevTools manual QA | Repository-required TDD and real app validation |
@@ -72,7 +78,7 @@ This layout is proposed; the application directory currently contains only a REA
 
 ## 4. Modules and Dependencies
 
-HTTP/UI adapters call application services. Services depend on pure domain rules and repository/transport interfaces. Infrastructure implements those interfaces. Worker uses the same services and domain rules, not the web endpoints. Browser bundles cannot import server repositories, credentials or model transport. No module imports the worker from the web layer.
+The app is initialized by the implementation agent using the verified create-next-app procedure in ADR-007; TypeScript strict mode is mandatory. HTTP/UI adapters call application services. Services depend on pure domain rules and repository/transport interfaces. Infrastructure implements those interfaces. Worker uses the same services and domain rules, not the web endpoints. Browser bundles cannot import server repositories, credentials or model transport. No module imports the worker from the web layer.
 
 | Module | Responsibility | Dependencies |
 |---|---|---|
@@ -89,7 +95,7 @@ The complete entity inventory is in [ADR-002](002-cases-persistence-and-api.md).
 
 ## 6. Interface Contracts
 
-All application HTTP endpoints are same-origin under `/api/v1`; Better Auth owns `/api/auth`. API requests authenticate and authorize before retrieving case contents. State-changing case requests carry an idempotency key and expected revision where specified. Long-running work returns a saved operation reference; clients poll durable state. Exact contracts and error semantics are in ADR-002; AI contracts are in ADR-003.
+All application HTTP endpoints are same-origin under `/api/v1`; Better Auth owns `/api/auth`. API requests authenticate and authorize before retrieving case contents. State-changing case requests carry an idempotency key and expected revision where specified. Submission returns a saved operation reference. Chat uses AI SDK UI message SSE backed by durable runs; case/queue summaries retain polling. Exact JSON contracts are in ADR-002, baseline image rules in ADR-003, and current stream contracts in ADR-006.
 
 ## 7. Environment Variables
 
@@ -104,9 +110,9 @@ These are proposed configuration requirements; this task does not change the exi
 | DATABASE_PATH | Shared absolute SQLite path | Yes | Absolute path ending app/var/copilot.sqlite |
 | PRIVATE_DATA_DIR | Evidence and staging root | Yes | Absolute path ending app/var/private |
 | OPENROUTER_API_KEY | Server-only model access | Yes for AI | Secret supplied locally |
-| OPENROUTER_BASE_URL | Fixed gateway origin | Yes | https://openrouter.ai/api/v1 |
-| VISION_MODEL | Image candidate | Yes | google/gemini-2.5-flash |
-| DECISION_MODEL | Reasoning candidate | Yes | anthropic/claude-sonnet-4.5 |
+| OPENROUTER_BASE_URL | Optional trusted server-only gateway base | No; documented default | https://openrouter.ai/api/v1 |
+| VISION_MODEL | Optional separate image candidate override | No; documented default | google/gemini-2.5-flash |
+| LLM_MODEL | Decision/chat candidate; preserve existing .env.example key | Yes | openai/gpt-6-luna |
 | OPENROUTER_PROVIDER_ALLOWLIST | Explicit qualified provider slugs | Yes before model jobs run | Set after capability check; no invented default |
 | AI_DAILY_BUDGET_USD | Admission limit for estimated model spend | Yes | 5.00 for synthetic local use |
 | SMTP_HOST / SMTP_PORT | Mailpit SMTP | Yes | 127.0.0.1 / 1025 |
